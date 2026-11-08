@@ -14,6 +14,7 @@
   - [7. Verificación del contenido del directorio con slapcat y ldapsearch](#7-verificación-del-contenido-del-directorio-con-slapcat-y-ldapsearch)
   - [8. Integración de la aplicación web con el servicio de directorio](#8-integración-de-la-aplicación-web-con-el-servicio-de-directorio)
   - [9. El informe de diagnóstico](#9-el-informe-de-diagnóstico)
+- [ldif/usuarios.ldif](#ldifusuariosldif)
 - [named.conf.local y db.local.dpl](#namedconflocal-y-dblocaldpl)
 - [scipts/comprobar.sh](#sciptscomprobarsh)
 - [comprobaciones.txt](#comprobacionestxt)
@@ -952,6 +953,29 @@ docker exec -it dpl-lab named-checkzone dpl.local /etc/bind/db.dpl.local.| Corre
 | **4. Servidor de Aplicaciones** *(Backend - Django / Gunicorn)* | Error interno de servidor (`HTTP 500 Internal Server Error`) o la API no responde a las peticiones POST de login. | Excepción interna en el código, variables de entorno de conexión LDAP desconfiguradas o caída de Gunicorn. | `docker logs dpl-django` | Ajustar las variables de entorno (`LDAP_HOST`, `LDAP_BASE_DN`) en la configuración del servicio y reiniciar el backend. | El contenedor responde correctamente a las peticiones de salud (`/healthz` con código `200`) y procesa la API. |
 | **5. Autenticación** *(Directorio OpenLDAP)* | Rechazo del inicio de sesión devolviendo estado `autenticado: false`, código HTTP `401` o error LDAP `49`. | Servicio LDAP caído o discrepancia en las credenciales proporcionadas frente a los registros del esquema `inetOrgPerson`. | `docker exec -it dpl-cliente ldapwhoami -x -H ldap://172.20.0.2 -D "uid=alumno,ou=usuarios,dc=dpl,dc=local" -w "..."` | Comprobar el estado activo de `slapd` y alinear las credenciales válidas en los ficheros LDIF. | `ldapwhoami` con contraseña correcta devuelve el DN del usuario y con contraseña errónea devuelve el error **`Invalid credentials (49)`**. |
 
+# ldif/usuarios.ldif
+
+```bash
+dn: ou=usuarios,dc=dpl,dc=local
+objectClass: organizationalUnit
+ou: usuarios
+
+dn: uid=alumno,ou=usuarios,dc=dpl,dc=local
+objectClass: inetOrgPerson
+uid: alumno
+cn: alumno
+sn: Alumno DPL
+mail: alumno@dpl.local
+userPassword: CAMBIAR_ESTO
+
+dn: uid=maria,ou=usuarios,dc=dpl,dc=local
+objectClass: inetOrgPerson
+uid: maria
+cn: maria
+sn: Maria DPL
+mail: maria@dpl.local
+userPassword: CAMBIAR_ESTO
+```
 
 # named.conf.local y db.local.dpl
 
