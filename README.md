@@ -288,7 +288,7 @@ Connection: keep-alive
 
 # Verificables
 
-* `named` está activo (`pgrep -a named`, `ss -lunp | grep :53`) y la zona `dpl.local` es `type master`; `named-checkconf` y `named-checkzone dpl.local /etc/bind/db.dpl.local` terminan en OK.
+**1. `named` está activo (`pgrep -a named`, `ss -lunp | grep :53`) y la zona `dpl.local` es `type master`; `named-checkconf` y `named-checkzone dpl.local /etc/bind/db.dpl.local` terminan en OK.**
 
 Comandos y salidas: 
 ```bash
@@ -354,9 +354,12 @@ What's next:
     Try Docker Debug for seamless, persistent debugging tools in any container or image → docker debug dpl-lab
     Learn more at https://docs.docker.com/go/debug-cli/
 ```
+* `pgrep -a named`: Busca en los procesos activos del contenedor si el demonio del servidor DNS (named) está corriendo.
+* `ss -lunp | grep :53`: Muestra las estadísticas de sockets de red (ss), filtrando las conexiones UDP (-u), en escucha (-l), mostrando los números de puerto (-n) y el proceso asociado (-p), específicamente en el puerto 53 (el puerto estándar de DNS).
+* `named-checkconf`: Analiza los archivos de configuración general de BIND9 para verificar que la sintaxis es correcta y no hay errores tipográficos.
+* `named-checkzone` dpl.local /etc/bind/db.dpl.local: Valida que el archivo de zona específico para el dominio dpl.local esté perfectamente estructurado.
 
-
-* La zona incluye SOA, NS y los registros **A** de `www` (servidor Web nginx) y `app` (servidor de aplicaciones).
+**2. La zona incluye SOA, NS y los registros **A** de `www` (servidor Web nginx) y `app` (servidor de aplicaciones).**
 
 ```bash
 docker exec -it dpl-lab cat /etc/bind/db.dpl.local
@@ -379,7 +382,9 @@ What's next:
     Learn more at https://docs.docker.com/go/debug-cli/
 ```
 
-* Desde `dpl-cliente` sin `/etc/hosts`: `nslookup www.dpl.local`, `dig @IP_DPL_LAB app.dpl.local A`, `host -t a www.dpl.local` y `ping -c 3 www.dpl.local` funcionan.
+El comando `cat /etc/bind/db.dpl.local` muestra el contenido completo del fichero de zona de BIND9 para el dominio dpl.local, permite comprobar que están declarados los registros del inicio de autoridad (SOA), los servidores de nombres (NS) y las IPs asociadas a www y app.
+
+**3. Desde `dpl-cliente` sin `/etc/hosts`: `nslookup www.dpl.local`, `dig @IP_DPL_LAB app.dpl.local A`, `host -t a www.dpl.local` y `ping -c 3 www.dpl.local` funcionan.**
 
 Comandos y salidas:
 ```bash
@@ -406,15 +411,46 @@ PING www.dpl.local (172.23.0.5) 56(84) bytes of data.
 rtt min/avg/max/mdev = 0.041/0.128/0.176/0.062 ms
 ```
 
+* `nslookup www.dpl.local`: Consulta al servidor DNS configurado en el contenedor cliente para resolver el nombre a su dirección IP.
+* `dig @172.20.0.2 app.dpl.local A +short`: Realiza una consulta DNS directa (dig) preguntando explícitamente al servidor DNS de laboratorio (172.20.0.2) por el registro tipo A de app.dpl.local, mostrando solo la respuesta limpia (+short).
+* `host -t a www.dpl.local`: Utiliza la utilidad host para buscar específicamente registros de tipo dirección (-t a) del dominio indicado.
+* `ping -c 3 www.dpl.local`: Envía 3 paquetes ICMP (-c 3) al dominio www.dpl.local para comprobar que, además de resolver el nombre por DNS, hay conectividad de red activa con la IP destino.
 
-* `curl -I http://www.dpl.local` y una petición a la aplicación por nombre llegan a los servicios.
+**4. `curl -I http://www.dpl.local` y una petición a la aplicación por nombre llegan a los servicios.**
 
-* `slapd` está activo (`pgrep -a slapd`, `ss -lntp | grep :389`) y la base `dc=dpl,dc=local` existe con `ou=usuarios` y las entradas del LDIF entregado.
+Comandos y salidas:
+```bash
+docker exec dpl-cliente curl -I http://www.dpl.local
+docker exec dpl-cliente curl -s http://app.dpl.local/
 
-* `ldapwhoami` con las credenciales correctas confirma el DN del usuario y con una contraseña incorrecta falla con error 49.
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+HTTP/1.1 200 OK
+Server: nginx/1.27.5
+Date: Sun, 08 Nov 2026 09:39:42 GMT
+Content-Type: text/html; charset=utf-8
+Connection: keep-alive
 
-* `slapcat` (o `ldapsearch`) demuestra el contenido del directorio entregado.
+<!doctype html>
+<html lang=en>
+<title>Redirecting...</title>
+<h1>Redirecting...</h1>
+<p>You should be redirected automatically to the target URL: <a href="/login?next=/">/login?next=/</a>. If not, click the link.
+```
 
-* La aplicación está configurada para autenticar contra el directorio (host, base DN, filtro y bind) y el usuario del directorio puede iniciar sesión.
+* `curl -I http://www.dpl.local`: Solicita únicamente las cabeceras HTTP (-I) al servidor web usando su nombre de dominio, verificando que Nginx responde correctamente (devolviendo el estado 200 OK).
+* `curl -s http://app.dpl.local/` Realiza una petición silenciosa (-s) al subdominio de la aplicación web, comprobando que el tráfico cruza el proxy inverso y alcanza el backend.
 
-* El **informe de diagnóstico** localiza fallos en las cinco capas (DNS, puerto, servidor Web, servidor de aplicaciones y autenticación) con la estructura síntoma / causa / comprobación / corrección / verificación.
+
+**5. `slapd` está activo (`pgrep -a slapd`, `ss -lntp | grep :389`) y la base `dc=dpl,dc=local` existe con `ou=usuarios` y las entradas del LDIF entregado.**
+
+
+
+**6. `ldapwhoami` con las credenciales correctas confirma el DN del usuario y con una contraseña incorrecta falla con error 49.**
+
+**7. `slapcat` (o `ldapsearch`) demuestra el contenido del directorio entregado.**
+
+**8. La aplicación está configurada para autenticar contra el directorio (host, base DN, filtro y bind) y el usuario del directorio puede iniciar sesión.**
+
+**9. El **informe de diagnóstico** localiza fallos en las cinco capas (DNS, puerto, servidor Web, servidor de aplicaciones y autenticación) con la estructura síntoma / causa / comprobación / corrección / verificación.**
