@@ -379,3 +379,42 @@ What's next:
     Learn more at https://docs.docker.com/go/debug-cli/
 ```
 
+* Desde `dpl-cliente` sin `/etc/hosts`: `nslookup www.dpl.local`, `dig @IP_DPL_LAB app.dpl.local A`, `host -t a www.dpl.local` y `ping -c 3 www.dpl.local` funcionan.
+
+Comandos y salidas:
+```bash
+docker exec dpl-cliente nslookup www.dpl.local
+docker exec dpl-cliente dig @172.20.0.2 app.dpl.local A +short
+docker exec dpl-cliente host -t a www.dpl.local
+docker exec dpl-cliente ping -c 3 www.dpl.local
+
+Server:		172.20.0.2
+Address:	172.20.0.2#53
+
+Name:	www.dpl.local
+Address: 172.23.0.5
+
+172.23.0.3
+www.dpl.local has address 172.23.0.5
+PING www.dpl.local (172.23.0.5) 56(84) bytes of data.
+64 bytes from 172.23.0.5: icmp_seq=1 ttl=64 time=0.041 ms
+64 bytes from 172.23.0.5: icmp_seq=2 ttl=64 time=0.169 ms
+64 bytes from 172.23.0.5: icmp_seq=3 ttl=64 time=0.176 ms
+
+--- www.dpl.local ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 2037ms
+rtt min/avg/max/mdev = 0.041/0.128/0.176/0.062 ms
+```
+
+
+* `curl -I http://www.dpl.local` y una petición a la aplicación por nombre llegan a los servicios.
+
+* `slapd` está activo (`pgrep -a slapd`, `ss -lntp | grep :389`) y la base `dc=dpl,dc=local` existe con `ou=usuarios` y las entradas del LDIF entregado.
+
+* `ldapwhoami` con las credenciales correctas confirma el DN del usuario y con una contraseña incorrecta falla con error 49.
+
+* `slapcat` (o `ldapsearch`) demuestra el contenido del directorio entregado.
+
+* La aplicación está configurada para autenticar contra el directorio (host, base DN, filtro y bind) y el usuario del directorio puede iniciar sesión.
+
+* El **informe de diagnóstico** localiza fallos en las cinco capas (DNS, puerto, servidor Web, servidor de aplicaciones y autenticación) con la estructura síntoma / causa / comprobación / corrección / verificación.
