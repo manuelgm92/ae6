@@ -8,11 +8,11 @@
   - [1. named está activo y validación de la zona](#1-named-está-activo-y-validación-de-la-zona)
   - [2. Estructura y registros de la zona DNS (SOA, NS y registros A)](#2-estructura-y-registros-de-la-zona-dns-soa-ns-y-registros-a)
   - [3. Resolución de nombres y conectividad desde el cliente sin /etc/hosts](#3-resolución-de-nombres-y-conectividad-desde-el-cliente-sin-etchosts)
-  - [4. Acceso web por nombre de dominio y proxy inverso](#4-acceso-web-por-nombre-de-dominio-y-proxy-inverso-nginx--aplicación)
+  - [4. Validación de peticiones HTTP por nombre de dominio](#4-validación-de-peticiones-http-por-nombre-de-dominio)
   - [5. Servicio OpenLDAP activo y estructura base del directorio LDAP](#5-servicio-openldap-activo-y-estructura-base-del-directorio-ldap)
   - [6. Validación de credenciales y control de errores con ldapwhoami](#6-validación-de-credenciales-y-control-de-errores-con-ldapwhoami)
   - [7. Verificación del contenido del directorio con slapcat y ldapsearch](#7-verificación-del-contenido-del-directorio-con-slapcat-y-ldapsearch)
-  - [8. Autenticación integrada de usuarios en la aplicación web](#8-autenticación-integrada-de-usuarios-en-la-aplicación-web)
+  - [8. Integración de la aplicación web con el servicio de directorio](#8-integración-de-la-aplicación-web-con-el-servicio-de-directorio)
   - [9. El informe de diagnóstico](#9-el-informe-de-diagnóstico)
   
 
@@ -112,7 +112,7 @@ docker exec dpl-lab ss -lunp | grep ':53'
 
 El resultado esperado: pgrep muestra el proceso named y ss el puerto 53 (UDP y TCP) escuchando.
 
-Salidas:
+salida de terminal:
 ```bash
 docker exec -it dpl-lab pgrep -a named
 
@@ -354,9 +354,6 @@ dn: uid=maria,ou=usuarios,dc=dpl,dc=local
 Enter LDAP Password: 
 dn:uid=alumno,ou=usuarios,dc=dpl,dc=local
 
-What's next:
-    Try Docker Debug for seamless, persistent debugging tools in any container or image → docker debug dpl-cliente
-    Learn more at https://docs.docker.com/go/debug-cli/
 Usuario alumno autenticado
 cn: alumno
 mail: alumno@dpl.local
@@ -565,7 +562,7 @@ docker exec dpl-cliente python3 /tmp/comprobar_acceso.py alumno contrasena_incor
 
 ## Verificación - Servicio de directorio
 
-Comandos y salidas:
+Comandos y salida de terminal:
 
 ```bash
 # Servicio y puerto (sin systemd)
@@ -655,9 +652,6 @@ dn: uid=maria,ou=usuarios,dc=dpl,dc=local
 Enter LDAP Password: 
 dn:uid=alumno,ou=usuarios,dc=dpl,dc=local
 
-What's next:
-    Try Docker Debug for seamless, persistent debugging tools in any container or image → docker debug dpl-cliente
-    Learn more at https://docs.docker.com/go/debug-cli/
 Usuario alumno autenticado
 cn: alumno
 mail: alumno@dpl.local
@@ -672,7 +666,7 @@ Acceso denegado: automatic bind not successful - invalidCredentials
 * `named` está activo (`pgrep -a named`, `ss -lunp | grep :53`) 
 * la zona `dpl.local` es `type master`; `named-checkconf` y `named-checkzone dpl.local /etc/bind/db.dpl.local` terminan en OK.
 
-Comandos y salidas: 
+Comandos y salida de terminal: 
 ```bash
 docker exec -it dpl-lab pgrep -a named
 docker exec -it dpl-lab ss -lunp | grep :53
@@ -681,10 +675,6 @@ docker exec -it dpl-lab named-checkzone dpl.local /etc/bind/db.dpl.local
 
 65 /usr/sbin/named -u bind
 
-What's next:
-    Try Docker Debug for seamless, persistent debugging tools in any container or image → docker debug dpl-lab
-    Learn more at https://docs.docker.com/go/debug-cli/
-
 UNCONN           0                0                              172.23.0.6:53                               0.0.0.0:*                                
 UNCONN           0                0                              172.23.0.6:53                               0.0.0.0:*                                
 UNCONN           0                0                              172.23.0.6:53                               0.0.0.0:*                                
@@ -726,15 +716,8 @@ UNCONN           0                0                                   [::1]:53  
 UNCONN           0                0                                   [::1]:53                                  [::]:*                                
 UNCONN           0                0                                   [::1]:53                                  [::]:*                                
 
-What's next:
-    Try Docker Debug for seamless, persistent debugging tools in any container or image → docker debug dpl-lab
-    Learn more at https://docs.docker.com/go/debug-cli/
 zone dpl.local/IN: loaded serial 2024110501
 OK
-
-What's next:
-    Try Docker Debug for seamless, persistent debugging tools in any container or image → docker debug dpl-lab
-    Learn more at https://docs.docker.com/go/debug-cli/
 ```
 * `pgrep -a named`: Busca en los procesos activos del contenedor si el demonio del servidor DNS (named) está corriendo.
 * `ss -lunp | grep :53`: Muestra las estadísticas de sockets de red (ss), filtrando las conexiones UDP (-u), en escucha (-l), mostrando los números de puerto (-n) y el proceso asociado (-p), específicamente en el puerto 53 (el puerto estándar de DNS).
@@ -760,10 +743,6 @@ $ORIGIN dpl.local.
 ns1     IN  A   172.20.0.2
 www     IN  A   172.23.0.5
 app     IN  A   172.23.0.3
-
-What's next:
-    Try Docker Debug for seamless, persistent debugging tools in any container or image → docker debug dpl-lab
-    Learn more at https://docs.docker.com/go/debug-cli/
 ```
 
 El comando `cat /etc/bind/db.dpl.local` muestra el contenido completo del fichero de zona de BIND9 para el dominio dpl.local, permite comprobar que están declarados los registros del inicio de autoridad (SOA), los servidores de nombres (NS) y las IPs asociadas a www y app.
@@ -772,7 +751,7 @@ El comando `cat /etc/bind/db.dpl.local` muestra el contenido completo del ficher
 
 * Desde `dpl-cliente` sin `/etc/hosts`: `nslookup www.dpl.local`, `dig @IP_DPL_LAB app.dpl.local A`, `host -t a www.dpl.local` y `ping -c 3 www.dpl.local` funcionan.
 
-Comandos y salidas:
+Comandos y salida de terminal:
 ```bash
 docker exec dpl-cliente nslookup www.dpl.local
 docker exec dpl-cliente dig @172.20.0.2 app.dpl.local A +short
@@ -802,11 +781,11 @@ rtt min/avg/max/mdev = 0.041/0.128/0.176/0.062 ms
 * `host -t a www.dpl.local`: Utiliza la utilidad host para buscar específicamente registros de tipo dirección (-t a) del dominio indicado.
 * `ping -c 3 www.dpl.local`: Envía 3 paquetes ICMP (-c 3) al dominio www.dpl.local para comprobar que, además de resolver el nombre por DNS, hay conectividad de red activa con la IP destino.
 
-### 4. Acceso web por nombre de dominio y proxy inverso (Nginx / Aplicación)
+### 4. Validación de peticiones HTTP por nombre de dominio
 
 * `curl -I http://www.dpl.local` y una petición a la aplicación por nombre llegan a los servicios.
 
-Comandos y salidas:
+Comandos y salida de terminal:
 ```bash
 docker exec dpl-cliente curl -I http://www.dpl.local
 docker exec dpl-cliente curl -s http://app.dpl.local/
@@ -836,7 +815,7 @@ Connection: keep-alive
 * `slapd` está activo (`pgrep -a slapd`, `ss -lntp | grep :389`) 
 * la base `dc=dpl,dc=local` existe con `ou=usuarios` y las entradas del LDIF entregado.
 
-Comandos y salidas:
+Comandos y salida de terminal:
 
 ```bash
 docker exec dpl-lab pgrep -a slapd
@@ -873,20 +852,99 @@ mail: maria@dpl.local
 userPassword: CAMBIAR_ESTO
 ```
 
-
-
 ### 6. Validación de credenciales y control de errores con ldapwhoami
 
 * `ldapwhoami` con las credenciales correctas confirma el DN del usuario y con una contraseña incorrecta falla con error 49.
+
+Comandos y salida de terminal:
+
+```bash
+docker exec -it dpl-cliente ldapwhoami -x -H ldap://172.20.0.2 -D "uid=alumno,ou=usuarios,dc=dpl,dc=local" -w "CAMBIAR_ESTO"
+docker exec -it dpl-cliente ldapwhoami -x -H ldap://172.20.0.2 -D "uid=alumno,ou=usuarios,dc=dpl,dc=local" -w "contrasena_incorrecta"
+
+dn:uid=alumno,ou=usuarios,dc=dpl,dc=local
+ldap_bind: Invalid credentials (49)
+```
 
 ### 7. Verificación del contenido del directorio con slapcat y ldapsearch
 
 * `slapcat` (o `ldapsearch`) demuestra el contenido del directorio.
 
-### 8. Autenticación integrada de usuarios en la aplicación web
+Comandos y salida de terminal:
+
+```bash
+docker exec -it dpl-lab ldapsearch -x -H ldap://localhost -b "ou=usuarios,dc=dpl,dc=local"
+
+# extended LDIF
+#
+# LDAPv3
+# base <ou=usuarios,dc=dpl,dc=local> with scope subtree
+# filter: (objectclass=*)
+# requesting: ALL
+#
+
+# usuarios, dpl.local
+dn: ou=usuarios,dc=dpl,dc=local
+objectClass: organizationalUnit
+ou: usuarios
+
+# maria, usuarios, dpl.local
+dn: uid=maria,ou=usuarios,dc=dpl,dc=local
+objectClass: inetOrgPerson
+uid: maria
+cn: maria
+sn: Maria DPL
+mail: maria@dpl.local
+
+# alumno, usuarios, dpl.local
+dn: uid=alumno,ou=usuarios,dc=dpl,dc=local
+objectClass: inetOrgPerson
+uid: alumno
+cn: alumno
+sn: Alumno DPL
+mail: alumno@dpl.local
+
+# search result
+search: 2
+result: 0 Success
+
+# numResponses: 4
+# numEntries: 3
+```
+
+### 8. Integración de la aplicación web con el servicio de directorio
 
 La aplicación está configurada para autenticar contra el directorio (host, base DN, filtro y bind) y el usuario del directorio puede iniciar sesión.
+
+Comandos y salida de terminal:
+
+```bash
+docker exec dpl-cliente curl -s -X POST -d "usuario=alumno&password=CAMBIAR_ESTO" http://www.dpl.local/api/login
+docker exec dpl-cliente curl -s -o /dev/null -w '%{http_code}\n' -X POST -d "usuario=alumno&password=incorrecta" http://www.dpl.local/api/login
+
+{"autenticado": true, "usuario": "alumno", "perfil": {"cn": "alumno", "mail": "alumno@dpl.local"}}
+401
+```
 
 ### 9. El informe de diagnóstico 
 
 **El informe de diagnóstico** localiza fallos en las cinco capas (DNS, puerto, servidor Web, servidor de aplicaciones y autenticación) con la estructura síntoma / causa / comprobación / corrección / verificación.
+
+|Capa analizada|	Sintoma observado|Causa raíz técnica|	Comando o acción de comprobación	|Correción aplicada|Verificación del estado OK|
+|--|--|--|--|--|--|
+
+|1. DNS (Resolución de Nombres) | Error del tipo Could not resolve host o NXDOMAIN al usar dominios.|El contenedor cliente no consultaba al servidor BIND9 del laboratorio (172.20.0.2), o el archivo de zona tenía errores sintácticos.|docker exec dpl-cliente nslookup www.dpl.local
+docker exec -it dpl-lab named-checkzone dpl.local /etc/bind/db.dpl.local.| Corregir registros en el fichero de zona de BIND9 y asegurar el correcto direccionamiento del nameserver. | named-checkzone termina en OK y nslookup resuelve la IP de Nginx correctamente.|
+
+2. Red / Puerto	docker network inspect	Conectividad activa en la red puente de Docker (dpl-net).	Enrutamiento operativo entre los contenedores de la infraestructura.
+3. Servidor Web	docker logs dpl-nginx	Peticiones HTTP registradas con códigos 200 OK y redirecciones a /login.	Nginx recibe el tráfico por nombre de dominio y hace proxy inverso hacia el backend.
+4. Aplicación	docker logs dpl-django	Trazas de Gunicorn mostrando peticiones a /healthz (200) y procesamiento de /api/login.	El servidor de aplicaciones gestiona correctamente las rutas y se comunica con el directorio.
+5. Directorio LDAP	slapd -d 0 / Logs de app	Error [Errno 111] Connection refused con pkill slapd, y éxito o error 49 en los binds.	Dependencia crítica del servicio de directorio para la validación de credenciales (inetOrgPerson).
+
+| Capa analizada | Síntoma observado | Causa raíz técnica | Comando o acción de comprobación | Corrección aplicada | Verificación del estado OK |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **1. DNS** *(Resolución de Nombres)* | Error del tipo *Could not resolve host* o NXDOMAIN al usar dominios. | El contenedor cliente no consultaba al servidor BIND9 del laboratorio (`172.20.0.2`), o el archivo de zona tenía errores sintácticos. | `docker exec dpl-cliente nslookup www.dpl.local`<br>`docker exec -it dpl-lab named-checkzone dpl.local /etc/bind/db.dpl.local` | Corregir registros en el fichero de zona de BIND9 y asegurar el correcto direccionamiento del nameserver. | `named-checkzone` termina en **OK** y `nslookup` resuelve la IP de Nginx correctamente. |
+| **2. Puerto / Red** *(Conectividad de Red y Sockets)* | Error de socket de red del tipo `[Errno 111] Connection refused` al intentar conectar al puerto del servicio. | El contenedor de servicio estaba detenido, el demonio `slapd` no escuchaba en el puerto, o la red Docker (`dpl-net`) estaba desconectada. | `docker exec dpl-lab pgrep -a slapd`<br>`docker exec dpl-lab ss -lntp \| grep :389` | Iniciar de nuevo el demonio OpenLDAP (`slapd -d 0 ...`) o revisar el enrutamiento de la red puente. | El comando `ss` confirma que el servicio escucha de nuevo en el puerto TCP `389` y la app restablece la conexión. |
+| **3. Servidor Web** *(Proxy Inverso - Nginx)* | Código de estado erróneo en las peticiones HTTP al dominio, como un `502 Bad Gateway` o un `404 Not Found`. | Nginx no enrutaba correctamente el tráfico hacia el *upstream* del backend, o el proxy carecía de conectividad con la aplicación. | `docker logs dpl-nginx` | Revisar los bloques `proxy_pass` en el archivo de configuración de Nginx (`default.conf`) y reiniciar el contenedor proxy. | `docker exec dpl-cliente curl -I http://www.dpl.local` devuelve **`HTTP/1.1 200 OK`**. |
+| **4. Servidor de Aplicaciones** *(Backend - Django / Gunicorn)* | Error interno de servidor (`HTTP 500 Internal Server Error`) o la API no responde a las peticiones POST de login. | Excepción interna en el código, variables de entorno de conexión LDAP desconfiguradas o caída de Gunicorn. | `docker logs dpl-django` | Ajustar las variables de entorno (`LDAP_HOST`, `LDAP_BASE_DN`) en la configuración del servicio y reiniciar el backend. | El contenedor responde correctamente a las peticiones de salud (`/healthz` con código `200`) y procesa la API. |
+| **5. Autenticación** *(Directorio OpenLDAP)* | Rechazo del inicio de sesión devolviendo estado `autenticado: false`, código HTTP `401` o error LDAP `49`. | Servicio LDAP caído o discrepancia en las credenciales proporcionadas frente a los registros del esquema `inetOrgPerson`. | `docker exec -it dpl-cliente ldapwhoami -x -H ldap://172.20.0.2 -D "uid=alumno,ou=usuarios,dc=dpl,dc=local" -w "..."` | Comprobar el estado activo de `slapd` y alinear las credenciales válidas en los ficheros LDIF. | `ldapwhoami` con contraseña correcta devuelve el DN del usuario y con contraseña errónea devuelve el error **`Invalid credentials (49)`**. |
