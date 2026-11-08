@@ -18,10 +18,25 @@
 - [named.conf.local y db.local.dpl](#namedconflocal-y-dblocaldpl)
 - [scipts/comprobar.sh](#sciptscomprobarsh)
 - [comprobaciones.txt](#comprobacionestxt)
-  
 
+## Arquitectura del Entorno y Topología de Red
+
+```mermaid
+graph TD
+    subgraph dpl-net [Red Docker / Topología de Laboratorio]
+        Cliente["Contenedor Cliente<br/>dpl-cliente"] -->|1. Consulta DNS| DNS["Servidor BIND9<br/>dpl-lab<br/>172.20.0.2:53"]
+        Cliente -->|2. Petición HTTP| Nginx["Servidor Web Nginx<br/>dpl-nginx<br/>172.23.0.5:80 (Ext: 8001)<br/>www.dpl.local"]
+        
+        Nginx -->|3. Proxy Pass / Reenvío| App["Servidor de Aplicaciones Django<br/>dpl-django<br/>172.23.0.3:8000<br/>app.dpl.local"]
+        
+        App -->|4. Bind / Validación LDAP| LDAP["Servidor de Directorio OpenLDAP<br/>dpl-lab<br/>172.20.0.2:389"]
+        
+        App -->|5. Conexión Base de Datos| DB[(PostgreSQL<br/>dpl-db<br/>Puerto: 5432)]
+    end
+```
 
 # DNS y resolución de nombres
+
 ## Paso 1 - Comprobar el entorno y la aplicación
 
 ```bash
