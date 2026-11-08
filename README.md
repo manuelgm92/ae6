@@ -14,6 +14,9 @@
   - [7. Verificación del contenido del directorio con slapcat y ldapsearch](#7-verificación-del-contenido-del-directorio-con-slapcat-y-ldapsearch)
   - [8. Integración de la aplicación web con el servicio de directorio](#8-integración-de-la-aplicación-web-con-el-servicio-de-directorio)
   - [9. El informe de diagnóstico](#9-el-informe-de-diagnóstico)
+- [named.conf.local y db.local.dpl](#namedconflocal-y-dblocaldpl)
+- [scipts/comprobar.sh](#sciptscomprobarsh)
+- [comprobaciones.txt](#comprobacionestxt)
   
 
 
@@ -948,3 +951,310 @@ docker exec -it dpl-lab named-checkzone dpl.local /etc/bind/db.dpl.local.| Corre
 | **3. Servidor Web** *(Proxy Inverso - Nginx)* | Código de estado erróneo en las peticiones HTTP al dominio, como un `502 Bad Gateway` o un `404 Not Found`. | Nginx no enrutaba correctamente el tráfico hacia el *upstream* del backend, o el proxy carecía de conectividad con la aplicación. | `docker logs dpl-nginx` | Revisar los bloques `proxy_pass` en el archivo de configuración de Nginx (`default.conf`) y reiniciar el contenedor proxy. | `docker exec dpl-cliente curl -I http://www.dpl.local` devuelve **`HTTP/1.1 200 OK`**. |
 | **4. Servidor de Aplicaciones** *(Backend - Django / Gunicorn)* | Error interno de servidor (`HTTP 500 Internal Server Error`) o la API no responde a las peticiones POST de login. | Excepción interna en el código, variables de entorno de conexión LDAP desconfiguradas o caída de Gunicorn. | `docker logs dpl-django` | Ajustar las variables de entorno (`LDAP_HOST`, `LDAP_BASE_DN`) en la configuración del servicio y reiniciar el backend. | El contenedor responde correctamente a las peticiones de salud (`/healthz` con código `200`) y procesa la API. |
 | **5. Autenticación** *(Directorio OpenLDAP)* | Rechazo del inicio de sesión devolviendo estado `autenticado: false`, código HTTP `401` o error LDAP `49`. | Servicio LDAP caído o discrepancia en las credenciales proporcionadas frente a los registros del esquema `inetOrgPerson`. | `docker exec -it dpl-cliente ldapwhoami -x -H ldap://172.20.0.2 -D "uid=alumno,ou=usuarios,dc=dpl,dc=local" -w "..."` | Comprobar el estado activo de `slapd` y alinear las credenciales válidas en los ficheros LDIF. | `ldapwhoami` con contraseña correcta devuelve el DN del usuario y con contraseña errónea devuelve el error **`Invalid credentials (49)`**. |
+
+
+# named.conf.local y db.local.dpl
+
+Comandos y salidas de terminal:
+
+* `named.conf.local`
+
+```bash
+docker exec -it dpl-lab cat /etc/bind/named.conf.local
+
+//
+// Do any local configuration here
+//
+
+// Consider adding the 1918 zones here, if they are not used in your
+// organization
+//include "/etc/bind/zones.rfc1918";
+zone "dpl.local" {
+    type master;
+    file "/etc/bind/db.dpl.local";
+};
+```
+
+* `db.local.dpl`
+
+```bash
+docker exec -it dpl-lab cat /etc/bind/db.dpl.local
+$TTL 3600
+$ORIGIN dpl.local.
+@       IN  SOA ns1.dpl.local. admin.dpl.local. (
+        2024110501 ; serial
+        3600       ; refresh
+        900        ; retry
+        604800     ; expire
+        86400 )    ; minimum TTL
+@       IN  NS  ns1.dpl.local.
+ns1     IN  A   172.20.0.2
+www     IN  A   172.23.0.5
+app     IN  A   172.23.0.3
+```
+
+
+# scipts/comprobar.sh
+
+Script `comprobar.sh`:
+
+```bash
+#!/usr/bin/env bash
+# comprobar.sh — comprobación de DNS y directorio (AE6).
+# Uso: IP_DPL_LAB=172.18.0.2 ./comprobar.sh
+set -u
+
+IP_DPL_LAB="172.20.0.2"
+BASE_DN="dc=dpl,dc=local"
+USER_DN="${USER_DN:-uid=alumno,ou=usuarios,${BASE_DN}}"
+USER_PASSWORD="${USER_PASSWORD:-CAMBIAR_ESTO}"
+ZONE_FILE="/etc/bind/db.dpl.local"
+FALLOS=0
+
+ok()   { echo "[OK]   $1"; }
+fallo(){ echo "[FALLO] $1"; FALLOS=$((FALLOS + 1)); }
+
+echo "== DNS =="
+docker exec dpl-lab named-checkconf && ok "named-checkconf" || fallo "named-checkconf"
+docker exec dpl-lab named-checkzone dpl.local "$ZONE_FILE" | grep -q OK \
+  && ok "named-checkzone" || fallo "named-checkzone"
+docker exec dpl-lab pgrep -a named >/dev/null && ok "named activo" || fallo "named no activo"
+
+for nombre in www.dpl.local app.dpl.local; do
+  ip="$(docker exec dpl-cliente dig +short "@${IP_DPL_LAB}" "$nombre" A)"
+  [ -n "$ip" ] && ok "$nombre -> $ip" || fallo "$nombre no resuelve"
+done
+
+echo "== Directorio =="
+docker exec dpl-lab pgrep -a slapd >/dev/null && ok "slapd activo" || fallo "slapd no activo"
+docker exec dpl-lab ldapsearch -x -LLL -b "$BASE_DN" "(uid=alumno)" dn | grep -q "dn:" \
+  && ok "usuario alumno en el directorio" || fallo "usuario alumno ausente"
+docker exec dpl-cliente ldapwhoami -x -H "ldap://$IP_DPL_LAB" -D "$USER_DN" -w "$USER_PASSWORD" \
+  | grep -q "dn:" && ok "bind correcto" || fallo "bind correcto rechazado"
+docker exec dpl-cliente ldapwhoami -x -H "ldap://$IP_DPL_LAB" -D "$USER_DN" -w "incorrecta" >/dev/null 2>&1 \
+  && fallo "un bind incorrecto no debería funcionar" || ok "bind incorrecto rechazado"
+
+echo "== Integración =="
+docker exec dpl-cliente curl -s -o /dev/null -w '%{http_code}' http://www.dpl.local \
+  | grep -q '^200$' && ok "Web por nombre (200)" || fallo "Web por nombre"
+docker exec dpl-cliente curl -s -o /dev/null -w '%{http_code}' -X POST \
+  -d "usuario=alumno&password=${USER_PASSWORD}" http://www.dpl.local/api/login \
+  | grep -q '^200$' && ok "login LDAP (200)" || fallo "login LDAP"
+
+echo
+if [ "$FALLOS" -eq 0 ]; then
+  echo "Resultado: todas las comprobaciones han pasado."
+else
+  echo "Resultado: $FALLOS comprobación(es) fallida(s)."
+  exit 1
+fi
+```
+
+Para poder ejecutar el script se debe adaptar el script con la ip del contenedor dpl-lab en dpl-net, y darle permisos de ejecución al archivo con el comando `chmod +x comprobar.sh`.
+
+Se ejecuta con el comando `IP_DPL_LAB=172.20.0.2 ./comprobar.sh`.
+
+Salida de terminal:
+```bash
+IP_DPL_LAB=172.20.0.2 ./comprobar.sh
+== DNS ==
+[OK]   named-checkconf
+[OK]   named-checkzone
+[OK]   named activo
+[OK]   www.dpl.local -> 172.23.0.5
+[OK]   app.dpl.local -> 172.23.0.3
+== Directorio ==
+[OK]   slapd activo
+[OK]   usuario alumno en el directorio
+[OK]   bind correcto
+[OK]   bind incorrecto rechazado
+== Integración ==
+[OK]   Web por nombre (200)
+[OK]   login LDAP (200)
+
+Resultado: todas las comprobaciones han pasado.
+```
+
+# comprobaciones.txt
+
+```bash
+# 1. DNS activo, zona válida y registros A
+docker exec dpl-lab pgrep -a named
+docker exec dpl-lab ss -lunp | grep ':53'
+docker exec dpl-lab named-checkconf
+docker exec dpl-lab named-checkzone dpl.local /etc/bind/db.dpl.local
+docker exec dpl-cliente nslookup www.dpl.local IP_DPL_LAB
+docker exec dpl-cliente dig @IP_DPL_LAB app.dpl.local A +noall +answer
+docker exec dpl-cliente host -t ns dpl.local
+
+# 2. Sin /etc/hosts y servicios por nombre
+docker exec dpl-cliente grep dpl.local /etc/hosts || echo "sin entradas locales (correcto)"
+docker exec dpl-cliente ping -c 3 www.dpl.local
+docker exec dpl-cliente curl -I http://www.dpl.local
+docker exec dpl-cliente curl -s http://app.dpl.local:8000/api/mensaje
+
+# 3. Directorio: servicio, base, entradas y autenticación
+docker exec dpl-lab pgrep -a slapd
+docker exec dpl-lab ss -lntp | grep ':389'
+docker exec dpl-lab slapcat
+docker exec dpl-cliente ldapwhoami -x -H ldap://IP_DPL_LAB -D "uid=alumno,ou=usuarios,dc=dpl,dc=local" -w CAMBIAR_ESTO
+docker exec dpl-cliente ldapwhoami -x -H ldap://IP_DPL_LAB -D "uid=alumno,ou=usuarios,dc=dpl,dc=local" -w incorrecta   # debe fallar
+
+# 3.b Login de la aplicación contra el directorio (200 correcto / 401 incorrecto)
+docker exec dpl-cliente curl -s -X POST -d "usuario=alumno&password=CAMBIAR_ESTO" http://www.dpl.local/api/login
+docker exec dpl-cliente curl -s -o /dev/null -w '%{http_code}\n' -X POST -d "usuario=alumno&password=incorrecta" http://www.dpl.local/api/login
+
+# 4. Comprobación automática del alumno
+bash scripts/comprobar.sh
+```
+
+Salida de terminal:
+
+```bash
+65 /usr/sbin/named -u bind
+UNCONN 0      0         172.23.0.6:53         0.0.0.0:*          
+UNCONN 0      0         172.23.0.6:53         0.0.0.0:*          
+UNCONN 0      0         172.23.0.6:53         0.0.0.0:*          
+UNCONN 0      0         172.23.0.6:53         0.0.0.0:*          
+UNCONN 0      0         172.23.0.6:53         0.0.0.0:*          
+UNCONN 0      0         172.23.0.6:53         0.0.0.0:*          
+UNCONN 0      0         172.23.0.6:53         0.0.0.0:*          
+UNCONN 0      0         172.23.0.6:53         0.0.0.0:*          
+UNCONN 0      0         172.23.0.6:53         0.0.0.0:*          
+UNCONN 0      0         172.23.0.6:53         0.0.0.0:*          
+UNCONN 0      0         172.20.0.2:53         0.0.0.0:*          
+UNCONN 0      0         172.20.0.2:53         0.0.0.0:*          
+UNCONN 0      0         172.20.0.2:53         0.0.0.0:*          
+UNCONN 0      0         172.20.0.2:53         0.0.0.0:*          
+UNCONN 0      0         172.20.0.2:53         0.0.0.0:*          
+UNCONN 0      0         172.20.0.2:53         0.0.0.0:*          
+UNCONN 0      0         172.20.0.2:53         0.0.0.0:*          
+UNCONN 0      0         172.20.0.2:53         0.0.0.0:*          
+UNCONN 0      0         172.20.0.2:53         0.0.0.0:*          
+UNCONN 0      0         172.20.0.2:53         0.0.0.0:*          
+UNCONN 0      0          127.0.0.1:53         0.0.0.0:*          
+UNCONN 0      0          127.0.0.1:53         0.0.0.0:*          
+UNCONN 0      0          127.0.0.1:53         0.0.0.0:*          
+UNCONN 0      0          127.0.0.1:53         0.0.0.0:*          
+UNCONN 0      0          127.0.0.1:53         0.0.0.0:*          
+UNCONN 0      0          127.0.0.1:53         0.0.0.0:*          
+UNCONN 0      0          127.0.0.1:53         0.0.0.0:*          
+UNCONN 0      0          127.0.0.1:53         0.0.0.0:*          
+UNCONN 0      0          127.0.0.1:53         0.0.0.0:*          
+UNCONN 0      0          127.0.0.1:53         0.0.0.0:*          
+UNCONN 0      0              [::1]:53            [::]:*          
+UNCONN 0      0              [::1]:53            [::]:*          
+UNCONN 0      0              [::1]:53            [::]:*          
+UNCONN 0      0              [::1]:53            [::]:*          
+UNCONN 0      0              [::1]:53            [::]:*          
+UNCONN 0      0              [::1]:53            [::]:*          
+UNCONN 0      0              [::1]:53            [::]:*          
+UNCONN 0      0              [::1]:53            [::]:*          
+UNCONN 0      0              [::1]:53            [::]:*          
+UNCONN 0      0              [::1]:53            [::]:*          
+zone dpl.local/IN: loaded serial 2024110501
+OK
+Server:		172.20.0.2
+Address:	172.20.0.2#53
+
+Name:	www.dpl.local
+Address: 172.23.0.5
+
+app.dpl.local.		3600	IN	A	172.23.0.3
+dpl.local name server ns1.dpl.local.
+sin entradas locales (correcto)
+PING www.dpl.local (172.23.0.5) 56(84) bytes of data.
+64 bytes from 172.23.0.5: icmp_seq=1 ttl=64 time=0.045 ms
+64 bytes from 172.23.0.5: icmp_seq=2 ttl=64 time=0.216 ms
+64 bytes from 172.23.0.5: icmp_seq=3 ttl=64 time=0.171 ms
+
+--- www.dpl.local ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 2091ms
+rtt min/avg/max/mdev = 0.045/0.144/0.216/0.072 ms
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+HTTP/1.1 200 OK
+Server: nginx/1.27.5
+Date: Sun, 08 Nov 2026 11:29:57 GMT
+Content-Type: text/html; charset=utf-8
+Connection: keep-alive
+
+99 slapd -d 0 -h ldap:///
+LISTEN 0      2048         0.0.0.0:389        0.0.0.0:*    users:(("slapd",pid=99,fd=6))
+LISTEN 0      2048            [::]:389           [::]:*    users:(("slapd",pid=99,fd=7))
+dn: dc=dpl,dc=local
+objectClass: top
+objectClass: dcObject
+objectClass: organization
+o: DPL
+dc: dpl
+structuralObjectClass: organization
+entryUUID: 4774a6d0-6ef9-1041-91e6-ed43b28b1020
+creatorsName: cn=admin,dc=dpl,dc=local
+createTimestamp: 20261107131708Z
+entryCSN: 20261107131708.593179Z#000000#000#000000
+modifiersName: cn=admin,dc=dpl,dc=local
+modifyTimestamp: 20261107131708Z
+
+dn: ou=usuarios,dc=dpl,dc=local
+objectClass: organizationalUnit
+ou: usuarios
+structuralObjectClass: organizationalUnit
+entryUUID: e415c8c2-6efc-1041-9db2-ab1e5e981393
+creatorsName: cn=admin,dc=dpl,dc=local
+createTimestamp: 20261107134259Z
+entryCSN: 20261107134259.863868Z#000000#000#000000
+modifiersName: cn=admin,dc=dpl,dc=local
+modifyTimestamp: 20261107134259Z
+
+dn: uid=alumno,ou=usuarios,dc=dpl,dc=local
+objectClass: inetOrgPerson
+uid: alumno
+cn: alumno
+sn: Alumno DPL
+mail: alumno@dpl.local
+userPassword:: Q0FNQklBUl9FU1RP
+structuralObjectClass: inetOrgPerson
+entryUUID: e4165454-6efc-1041-9db3-ab1e5e981393
+creatorsName: cn=admin,dc=dpl,dc=local
+createTimestamp: 20261107134259Z
+entryCSN: 20261107134259.867516Z#000000#000#000000
+modifiersName: cn=admin,dc=dpl,dc=local
+modifyTimestamp: 20261107134259Z
+
+dn: uid=maria,ou=usuarios,dc=dpl,dc=local
+objectClass: inetOrgPerson
+uid: maria
+cn: maria
+sn: Maria DPL
+mail: maria@dpl.local
+userPassword:: Q0FNQklBUl9FU1RP
+structuralObjectClass: inetOrgPerson
+entryUUID: e416b08e-6efc-1041-9db4-ab1e5e981393
+creatorsName: cn=admin,dc=dpl,dc=local
+createTimestamp: 20261107134259Z
+entryCSN: 20261107134259.869878Z#000000#000#000000
+modifiersName: cn=admin,dc=dpl,dc=local
+modifyTimestamp: 20261107134259Z
+
+dn:uid=alumno,ou=usuarios,dc=dpl,dc=local
+ldap_bind: Invalid credentials (49)
+{"autenticado": true, "usuario": "alumno", "perfil": {"cn": "alumno", "mail": "alumno@dpl.local"}}401
+== DNS ==
+[OK]   named-checkconf
+[OK]   named-checkzone
+[OK]   named activo
+[OK]   www.dpl.local -> 172.23.0.5
+[OK]   app.dpl.local -> 172.23.0.3
+== Directorio ==
+[OK]   slapd activo
+[OK]   usuario alumno en el directorio
+[OK]   bind correcto
+[OK]   bind incorrecto rechazado
+== Integración ==
+[OK]   Web por nombre (200)
+[OK]   login LDAP (200)
+
+Resultado: todas las comprobaciones han pasado.
+```
